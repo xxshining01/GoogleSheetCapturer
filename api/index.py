@@ -9,13 +9,13 @@ app = FastAPI()
 
 @app.get("/api")
 def read_root():
-    return {"status": "✅ API Online (Mathematical Perfect Crop Mode)!"}
+    return {"status": "✅ API Online (User's Exact Mathematical Crop Mode)!"}
 
 @app.post("/api")
 async def convert_to_zip(
     file: UploadFile = File(...), 
     names: str = Form(...),
-    ratios: str = Form(...)  # <--- รับค่าสัดส่วนคณิตศาสตร์ที่ส่งมาจาก Sheet
+    ratios: str = Form(...)  # รับค่าสัดส่วน (Vertical/Horizontal) ที่คำนวณมาจาก Sheet
 ):
     try:
         pdf_bytes = await file.read()
@@ -31,15 +31,14 @@ async def convert_to_zip(
                 mat = fitz.Matrix(3.0, 3.0) 
                 pix = page.get_pixmap(matrix=mat)
                 
-                # นำภาพที่ได้มาเปิดเตรียมตัด
+                # แปลงเป็น Image object ของ Pillow เพื่อเตรียมครอป
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 
-                # --- พลังคณิตศาสตร์ ---
-                # หาความสูงเป๊ะๆ จากสัดส่วนที่คำนวณไว้ (+1 pixel กันเส้นขอบล่างสุดแหว่ง)
+                # ตรรกะของคุณ: เอา Horizontal (img.width) * สัดส่วน = Vertical ที่แท้จริง
                 current_ratio = ratio_list[i] if i < len(ratio_list) else ratio_list[-1]
-                target_height = int(img.width * current_ratio) + 1
+                target_height = int(img.width * current_ratio)
                 
-                # สั่งหั่นภาพ (x_เริ่ม, y_เริ่ม, x_สิ้นสุด, y_สิ้นสุด)
+                # ครอปจากตำแหน่งบนสุด Vertex (0,0) ไปจนถึง (Horizontal, Vertical)
                 img = img.crop((0, 0, img.width, target_height))
                 
                 out_bytes = io.BytesIO()
