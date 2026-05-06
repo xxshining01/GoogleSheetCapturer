@@ -3,26 +3,30 @@ from fastapi.responses import Response, JSONResponse
 import fitz  # PyMuPDF
 import zipfile
 import io
-from PIL import Image
+from PIL import Image, ImageOps
 
 app = FastAPI()
 
-# ฟังก์ชันหั่นขอบล่างขั้นเด็ดขาด (ใช้ Threshold กรองเงาขยะทิ้ง)
+# ฟังก์ชันสแกน Pixel จากล่างขึ้นบนตามตรรกะที่คุณแนะนำ
 def trim_bottom_white_space(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     
-    # 1. แปลงภาพเป็นโหมดขาวดำ (Grayscale) เพื่อให้อ่านค่าง่าย
+    # 1. แปลงภาพเป็นขาวดำ เพื่อให้เช็คความสว่างของสีกราฟิกได้ง่าย
     gray = img.convert("L")
     
-    # 2. กรองสี: ถ้าจุดไหนสีอ่อนเกินไป (เช่น พื้นหลังขาว หรือขอบเทาจางๆ) ให้ตั้งค่าเป็น 0
-    # ส่วนสีที่เข้มกว่า 250 (เส้นขอบตาราง สีพื้นหลังเซลล์ ข้อความ) ให้ตั้งค่าเป็น 255
-    mask = gray.point(lambda p: 255 if p < 250 else 0)
+    # 2. กลับสีภาพ (Invert) พื้นขาวจะกลายเป็นดำ(0) และเส้นตารางจะกลายเป็นขาวสว่าง
+    inverted = ImageOps.invert(gray)
     
-    # 3. ให้หาระยะที่มีจุดสี 255 อยู่
+    # 3. ตั้งเกณฑ์ความเข้ม (Threshold): สีเทาอ่อน ขยะ PDF หรือเงากระดาษ จะถูกปัดเป็นดำให้หมด (ไม่นับ)
+    # ส่วนสีไหนที่เข้มระดับเส้นตารางหรือตัวหนังสือ จะถูกปัดเป็นสว่างสุดเพื่อเป็นจุดมาร์ค
+    mask = inverted.point(lambda p: 255 if p > 15 else 0)
+    
+    # 4. ฟังก์ชัน getbbox() จะทำหน้าที่ "สแกนจากขอบเข้าหาตรงกลาง" จนกว่าจะเจอพิกเซลสว่างจุดแรก
     bbox = mask.getbbox()
     
     if bbox:
-        # bbox[3] จะจับพิกัดของ "เส้นตารางเส้นล่างสุด" ได้อย่างแม่นยำ โดยไม่สนขยะอื่นๆ
+        # bbox[3] คือพิกัด Y (แนวตั้ง) ของเส้นตารางล่างสุดที่ระบบสแกนเจอ
+        # หั่นจากจุดเริ่มต้น ไปบรรจบชิดเส้นขอบตารางล่างสุดพอดีเป๊ะๆ!
         img = img.crop((0, 0, img.width, bbox[3]))
     
     out_bytes = io.BytesIO()
@@ -31,7 +35,7 @@ def trim_bottom_white_space(image_bytes):
 
 @app.get("/api")
 def read_root():
-    return {"status": "✅ API Online (Ultra Zero Edge Mode)!"}
+    return {"status": "✅ API Online (Bottom-Up Pixel Scan Mode)!"}
 
 @app.post("/api")
 async def convert_to_zip(file: UploadFile = File(...), names: str = Form(...)):
@@ -48,7 +52,7 @@ async def convert_to_zip(file: UploadFile = File(...), names: str = Form(...)):
                 mat = fitz.Matrix(3.0, 3.0) 
                 pix = page.get_pixmap(matrix=mat)
                 
-                # ส่งเข้าฟังก์ชันหั่นแบบใหม่
+                # ส่งเข้าฟังก์ชันสแกนพิกเซล
                 cropped_png_bytes = trim_bottom_white_space(pix.tobytes("png"))
                 
                 file_name = f"{name_list[i]}.png" if i < len(name_list) else f"page_{i+1}.png"
