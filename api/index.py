@@ -7,29 +7,39 @@ from PIL import Image
 
 app = FastAPI()
 
-def trim_bottom_white_space(image_bytes):
+# ฟังก์ชันสแกนจาก "บนลงล่าง" (Top-Down Scanner) ทะลวงขยะก้นกระดาษ
+def trim_top_down_white_space(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     pixels = img.load()
     width, height = img.size
     
+    empty_streak = 0
     bottom_crop = height
     
-    # 1. กระโดดข้ามขอบกระดาษ! เริ่มสแกนโดยถอยขึ้นมาจากขอบล่าง 20 พิกเซล 
-    for y in range(height - 20, -1, -2):
-        dark_pixels = 0
+    # 1. เริ่มสแกนจากบรรทัดบนสุด (y=0) ไหลลงไปล่างสุด (y=height)
+    for y in range(0, height):
+        is_empty = True
         
-        # 2. กระโดดข้ามขอบซ้ายขวา! ตัดพื้นที่ริมขอบทิ้งฝั่งละ 50 พิกเซล สแกนแค่ตรงกลาง
+        # 2. กวาดสายตาแนวนอน (ข้ามขอบกระดาษซ้ายขวาไปฝั่งละ 50 พิกเซล)
         for x in range(50, width - 50, 5):
             r, g, b = pixels[x, y]
             
-            # ถ้าเป็นสีเข้ม (เส้นตาราง, สีพื้นหลังตารางแถวล่างสุด)
-            if r < 235 or g < 235 or b < 235:
-                dark_pixels += 1
-        
-        # 3. ถ้าเจอพิกเซลเข้มๆ รวมกันเกิน 30 จุด ฟันธงว่าเป็นตารางแน่นอน!
-        if dark_pixels > 30:
-            bottom_crop = y + 5 # เผื่อที่ให้เส้นขอบ 5 พิกเซล ภาพจะได้ไม่แหว่ง
-            break
+            # ถ้าเจอสีเข้ม (เส้นขอบตาราง หรือ ตัวหนังสือ) แม้แต่จุดเดียว
+            if r < 240 or g < 240 or b < 240:
+                is_empty = False
+                break # เลิกหาในบรรทัดนี้ ไปบรรทัดต่อไปได้เลย
+                
+        if is_empty:
+            empty_streak += 1  # ถ้านี่คือบรรทัดที่ขาวโล่ง ให้นับสะสมไว้
+        else:
+            empty_streak = 0   # ถ้าเดินสะดุดเส้นตาราง ให้รีเซ็ตค่าเป็น 0 ทันที
+            
+        # 3. ถ้าเจอพื้นที่ขาวโล่งๆ ต่อเนื่องกัน "40 พิกเซล" 
+        # (ตารางปกติจะไม่มีทางขาวโล่งยาวขนาดนี้ เพราะติดเส้นแนวตั้ง)
+        if empty_streak > 40:
+            # สั่งตัดโดยย้อนกลับไป 40 พิกเซล (เพื่อชิดขอบตารางเป๊ะๆ) + เผื่อความหนาเส้น 5 พิกเซล
+            bottom_crop = y - 40 + 5
+            break # เลิกสแกน! หั่นตรงนี้เลย!
             
     bottom_crop = min(bottom_crop, height)
     img = img.crop((0, 0, width, bottom_crop))
@@ -40,7 +50,7 @@ def trim_bottom_white_space(image_bytes):
 
 @app.get("/api")
 def read_root():
-    return {"status": "✅ API Online (Safe Zone Pixel Scanner Mode)!"}
+    return {"status": "✅ API Online (Top-Down Scanner Mode)!"}
 
 @app.post("/api")
 async def convert_to_zip(file: UploadFile = File(...), names: str = Form(...)):
@@ -57,8 +67,8 @@ async def convert_to_zip(file: UploadFile = File(...), names: str = Form(...)):
                 mat = fitz.Matrix(3.0, 3.0) 
                 pix = page.get_pixmap(matrix=mat)
                 
-                # เข้าเครื่องสแกนเจาะไข่แดง
-                cropped_png_bytes = trim_bottom_white_space(pix.tobytes("png"))
+                # เข้าเครื่องสแกน Top-Down
+                cropped_png_bytes = trim_top_down_white_space(pix.tobytes("png"))
                 
                 file_name = f"{name_list[i]}.png" if i < len(name_list) else f"page_{i+1}.png"
                 zip_file.writestr(file_name, cropped_png_bytes)
@@ -68,3 +78,4 @@ async def convert_to_zip(file: UploadFile = File(...), names: str = Form(...)):
         
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Python Error: {str(e)}"})
+    
