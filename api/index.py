@@ -7,7 +7,7 @@ from PIL import Image, ImageChops
 
 app = FastAPI()
 
-# ฟังก์ชันหั่นเฉพาะพื้นที่ว่าง "ด้านล่าง" (รักษาสัดส่วนซ้ายขวาให้เท่ากันทุกรูป)
+# ฟังก์ชันหั่นเฉพาะขอบล่างแบบ Zero Edge (ชิดเส้นตาราง 100%)
 def trim_bottom_white_space(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     bg = Image.new("RGB", img.size, (255, 255, 255))
@@ -15,11 +15,9 @@ def trim_bottom_white_space(image_bytes):
     bbox = diff.getbbox()
     
     if bbox:
-        # bbox คือ (ซ้าย, บน, ขวา, ล่าง)
-        # เราจะครอบภาพตั้งแต่ ซ้ายสุด(0), บนสุด(0), ขวาสุด(img.width) และตัดแค่ด้านล่าง(bbox[3])
-        # บวกเพิ่ม 2 pixel กันเส้นขอบตารางล่างสุดแหว่ง
-        bottom = min(bbox[3] + 2, img.height)
-        img = img.crop((0, 0, img.width, bottom))
+        # bbox[3] คือพิกัดแนวตั้งของ "พิกเซลล่างสุด" ที่มีสี (เส้นตารางเส้นสุดท้าย)
+        # สั่งตัดแบบชิดเส้นพิกัดนี้เป๊ะๆ ไม่บวกพื้นที่ขาวเผื่ออีกต่อไป
+        img = img.crop((0, 0, img.width, bbox[3]))
     
     out_bytes = io.BytesIO()
     img.save(out_bytes, format="PNG")
@@ -27,7 +25,7 @@ def trim_bottom_white_space(image_bytes):
 
 @app.get("/api")
 def read_root():
-    return {"status": "✅ API Online (Zero Edge & Fixed Width Mode)!"}
+    return {"status": "✅ API Online (Absolute Zero Edge Bottom Mode)!"}
 
 @app.post("/api")
 async def convert_to_zip(file: UploadFile = File(...), names: str = Form(...)):
@@ -41,10 +39,9 @@ async def convert_to_zip(file: UploadFile = File(...), names: str = Form(...)):
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for i in range(len(doc)):
                 page = doc.load_page(i)
-                mat = fitz.Matrix(3.0, 3.0) # คูณความละเอียดภาพ 3 เท่า ให้คมกริบ
+                mat = fitz.Matrix(3.0, 3.0) # ความละเอียดภาพคมชัดสูง
                 pix = page.get_pixmap(matrix=mat)
                 
-                # ส่งภาพเข้าฟังก์ชันหั่นขอบล่าง
                 cropped_png_bytes = trim_bottom_white_space(pix.tobytes("png"))
                 
                 file_name = f"{name_list[i]}.png" if i < len(name_list) else f"page_{i+1}.png"
